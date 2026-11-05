@@ -336,3 +336,27 @@ az group delete --name <RESOURCE_GROUP> --yes
 ```
 
 Optional local cleanup: delete both `.venv` folders and both `.env` files.
+
+## 16. CI/CD with GitHub Actions (optional)
+
+Same deployment, run by GitHub instead of your laptop. Full guide: [gh-actions-workflow.md](gh-actions-workflow.md).
+
+| Step here | In GitHub Actions |
+|---|---|
+| 3. Sign in | OIDC federated credential, no secret (`azure/login`) |
+| 6–7, 12. Provision + tracing | **Provision** workflow (`lib.sh provision`) |
+| 5. Unit tests | **CI** workflow (Python 3.12 + 3.13 matrix) |
+| 9. Prompt Agent | `prompt_agent_ci.py publish`: new version only when `instructions.md` changes |
+| 11. Deploy Hosted Agent | `azd deploy` in `_deploy-agent.yml`, `dev` then `prod` (approval) |
+| 13–14. Verify | Smoke matrix from `scripts/ci/smoke-cases.json`: Hosted strict, Prompt soft |
+| 15. Clean up | **Teardown** workflow |
+
+For an agent doing the setup:
+
+1. Get the user's approval. Have them sign in: `az login --tenant <TENANT_ID> --use-device-code`; `gh auth status` must show the fork's owner.
+2. Run `scripts/ci/setup-github-oidc.ps1 -GitHubRepo <owner>/<repo>` (or the `.sh`; on Git Bash set `MSYS_NO_PATHCONV=1`). Inputs as in step 1; `AZURE_ENV_NAME` becomes the project name.
+3. `gh workflow run provision.yml -R <owner>/<repo>`, then `gh run watch`.
+4. `gh workflow run cd.yml -R <owner>/<repo>`. When `prod` waits, ask the user to approve it in the run page.
+5. Teardown only when the user says so: `gh workflow run teardown.yml -R <owner>/<repo> -f confirm=<RESOURCE_GROUP>`.
+
+The workflows call `azd` with `AZURE_DEV_USER_AGENT=microsoft_foundry_skill` inline (in `lib.sh`), as in the rules above.

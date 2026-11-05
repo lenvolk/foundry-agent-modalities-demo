@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="520" viewBox="0 0 1180 520" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1e1e1e"/></marker></defs>
+<rect width="1180" height="520" fill="#ffffff"/>
+<text x="30" y="50" font-size="26" font-weight="600">How a workflow signs in to Azure without a secret (OIDC)</text>
+<text x="30" y="80" font-size="16" fill="#495057">A short-lived token per job. Nothing to rotate, nothing to leak.</text>
+<rect x="620" y="110" width="530" height="380" rx="14" fill="none" stroke="#1864ab" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="632" y="132" font-size="15" fill="#1864ab" font-weight="600">Azure (your tenant)</text>
+<rect x="40" y="140" width="300" height="100" rx="12" fill="#dee2e6" stroke="#495057" stroke-width="2"/>
+<text x="190.0" y="185.0" font-size="16" text-anchor="middle" font-weight="600">GitHub OIDC provider</text>
+<text x="190.0" y="205.0" font-size="14" text-anchor="middle">issues a signed token</text>
+<rect x="40" y="340" width="300" height="130" rx="12" fill="#fff3bf" stroke="#e67700" stroke-width="2"/>
+<text x="190.0" y="390.0" font-size="16" text-anchor="middle" font-weight="600">GitHub job</text>
+<text x="190.0" y="410.0" font-size="14" text-anchor="middle">environment: dev</text>
+<text x="190.0" y="430.0" font-size="14" text-anchor="middle">permissions: id-token: write</text>
+<rect x="650" y="140" width="230" height="100" rx="12" fill="#a5d8ff" stroke="#1864ab" stroke-width="2"/>
+<text x="765.0" y="185.0" font-size="16" text-anchor="middle" font-weight="600">Microsoft Entra ID</text>
+<text x="765.0" y="205.0" font-size="14" text-anchor="middle">checks the token</text>
+<rect x="910" y="140" width="220" height="100" rx="12" fill="#f3d9fa" stroke="#862e9c" stroke-width="2"/>
+<text x="1020.0" y="175.0" font-size="16" text-anchor="middle" font-weight="600">App registration</text>
+<text x="1020.0" y="195.0" font-size="14" text-anchor="middle">federated credential</text>
+<text x="1020.0" y="215.0" font-size="14" text-anchor="middle">subject must match</text>
+<rect x="650" y="370" width="480" height="110" rx="12" fill="#b2f2bb" stroke="#2f9e44" stroke-width="2"/>
+<text x="890.0" y="410.0" font-size="16" text-anchor="middle" font-weight="600">Resource group FoundryModalitiesCI</text>
+<text x="890.0" y="430.0" font-size="14" text-anchor="middle">Contributor · Foundry User · RBAC Admin (conditional)</text>
+<text x="890.0" y="450.0" font-size="14" text-anchor="middle">+ tiny sub-level role for deployments/purge</text>
+<line x1="190.0" y1="340" x2="190.0" y2="240" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<text x="198.0" y="286.0" font-size="13" text-anchor="start" fill="#343a40">1  ask for a token</text>
+<line x1="340" y1="190.0" x2="650" y2="190.0" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<text x="495.0" y="178.0" font-size="13" text-anchor="middle" fill="#343a40">2  subject = repo:…:environment:dev</text>
+<line x1="880" y1="190.0" x2="910" y2="190.0" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<line x1="765.0" y1="240" x2="340" y2="372.5" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<line x1="340" y1="437.5" x2="650" y2="425.0" stroke="#1e1e1e" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#ah)"/>
+<text x="495.0" y="427.25" font-size="13" text-anchor="middle" fill="#343a40">5  azd / az calls</text>
+<text x="910" y="266" font-size="15" fill="#343a40">3  subject matches?</text>
+<text x="400" y="456" font-size="15" fill="#343a40">4  Azure token (~1 h)</text>
+</svg>

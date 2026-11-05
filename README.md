@@ -51,11 +51,18 @@ Tenant: <TENANT_ID>  Subscription: <SUBSCRIPTION_ID>  Resource group: <RESOURCE_
 
 The agent asks you to sign in, provisions everything (including Application Insights for traces), and tests both agents.
 
+## Deploy with GitHub Actions
+
+![GitHub Actions pipeline](docs/diagrams/gh-actions-pipeline.svg)
+
+Push a change → unit tests → deploy to `dev` → smoke-test both agents (2 cases × 2 agents) → you approve → `prod`. Signs in to Azure with OIDC, no secrets. Start at [gh-actions-workflow.md](gh-actions-workflow.md).
+
 ## Docs
 
 | File | For | What |
 |---|---|---|
 | [ai-deployment.md](ai-deployment.md) | AI agent (or you) | Exact deployment steps, Windows + macOS/Linux, tracing, cleanup |
+| [gh-actions-workflow.md](gh-actions-workflow.md) | You | GitHub Actions CI/CD: OIDC setup, every Actions feature explained, fork checklist |
 | [customer-demo-local.md](customer-demo-local.md) | Presenter | Run the Hosted Agent locally and change one rule |
 | [customer-demo.md](customer-demo.md) | Presenter | Prompt the deployed Hosted Agent in the portal and read its trace |
 | [docs/original-README.md](docs/original-README.md) | Reference | Upstream setup guide (macOS/Linux) |
