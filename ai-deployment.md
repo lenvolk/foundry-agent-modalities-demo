@@ -1,18 +1,33 @@
 # AI deployment guide
 
-Instructions for an AI coding agent to deploy this demo end to end. A human can follow them too. Validated on November 1, 2026 on Windows 11 (PowerShell 7) in North Central US.
+Instructions for an AI coding agent to deploy this demo end to end. A human can follow them too. Path A validated on November 1, 2026; Path B on November 5, 2026. Both on Windows 11 (PowerShell 7) in North Central US.
+
+## Choose a path
+
+| | **Path A: local** | **Path B: GitHub Actions** (recommended for repeatable deploys) |
+|---|---|---|
+| Who runs `azd` | you / the agent, on this machine | GitHub runners, signed in with OIDC |
+| Good for | a one-off demo, local debugging | every change tested + deployed the same way; dev → prod approval |
+| Azure identity | the signed-in user | a CI service principal with least-privilege roles |
+| Steps | [1–15](#path-a-local) | [B1–B11](#path-b-github-actions) |
+| Explains the *why* | — | [gh-actions-workflow.md](gh-actions-workflow.md) |
+
+Both create the same Foundry resources. Use **one** path per resource group.
 
 ## Rules for the agent
 
 - Get the user's approval before creating Azure resources. Ask them to sign in. Never handle their password.
-- Prefix every `azd` command with `AZURE_DEV_USER_AGENT=microsoft_foundry_skill` (inline only, never persisted).
-- Never commit `.env` files, endpoints, connection strings, subscription or tenant IDs.
-- Run `create_and_run.py` **once**. Use `invoke.py` afterwards.
+- Prefix every `azd` command with `AZURE_DEV_USER_AGENT=microsoft_foundry_skill` (inline only, never persisted). The workflows do this inside `scripts/ci/lib.sh`.
+- Never commit `.env` files, endpoints, connection strings, client/subscription/tenant IDs.
+- Path A: run `create_and_run.py` **once**. Use `invoke.py` afterwards.
 - Run commands from the repo root unless a step says `deployment/`.
+- Path B: never push to a branch the user didn't name, and run **Teardown** only when the user says so.
 
 PowerShell: set `$env:AZURE_DEV_USER_AGENT='microsoft_foundry_skill'` once per shell instead of the inline prefix.
 
 ## What gets created
+
+Both paths:
 
 ```text
 Resource group <RESOURCE_GROUP>
@@ -22,9 +37,24 @@ Resource group <RESOURCE_GROUP>
 │   │   ├── Hosted Agent   field-demo-support-triage-hosted   (container runs on Microsoft-managed compute)
 │   │   └── connection     appi-<name>   (App Insights, for traces)
 │   └── model deployment   gpt-5.6-sol  (GlobalStandard, 10K TPM)
-├── Log Analytics workspace  log-<name>
-└── Application Insights     appi-<name>  (workspace-based)
+├── Log Analytics workspace  log-<name>      (Path B: log-<ENV_NAME>)
+└── Application Insights     appi-<name>     (Path B: appi-<ENV_NAME>, workspace-based)
 ```
+
+Path B also creates (by `scripts/ci/setup-github-oidc.ps1|.sh`):
+
+| Where | What | Why |
+|---|---|---|
+| Entra ID | App registration + service principal `gh-<owner>-<repo>-foundry-ci` | The identity the workflows use |
+| Entra ID | 3 federated credentials: `<prefix>:environment:dev`, `:environment:prod`, `:ref:refs/heads/main` | OIDC sign-in, no secret. `<prefix>` comes from GitHub (see B9) |
+| Resource group | **Contributor**, **Foundry User**, **RBAC Administrator** (condition: may assign only Foundry User) | Create resources; call agents; let `azd deploy` give the agent identity Foundry User |
+| Subscription | Custom role **Foundry CI subscription deployer**: `Microsoft.Resources/deployments/*`, read subscription/RGs, purge deleted Foundry accounts | azd's Foundry provider runs a **subscription-scope** ARM deployment; Teardown purges. Each resource inside is still checked against the RG roles |
+| GitHub | 7 repository variables (B4) | Read by every workflow |
+| GitHub | Environments `dev` (no rules) and `prod` (required reviewer) | Approval gate before prod |
+
+<a id="path-a-local"></a>
+
+# Path A: local
 
 ## 1. Collect inputs
 
@@ -337,26 +367,159 @@ az group delete --name <RESOURCE_GROUP> --yes
 
 Optional local cleanup: delete both `.venv` folders and both `.env` files.
 
-## 16. CI/CD with GitHub Actions (optional)
+<a id="path-b-github-actions"></a>
 
-Same deployment, run by GitHub instead of your laptop. Full guide: [gh-actions-workflow.md](gh-actions-workflow.md).
+# Path B: GitHub Actions
 
-| Step here | In GitHub Actions |
+GitHub runs `azd` for you. Feature-by-feature explanations, diagrams, and the role rationale are in [gh-actions-workflow.md](gh-actions-workflow.md); this section is the exact *how*.
+
+| Workflow | Trigger | Does |
+|---|---|---|
+| `ci.yml` | push / PR touching `deployment/src/**`, `prompt_agent/**`, `scripts/ci/**`, `.github/**` | Unit tests (Python 3.12 + 3.13), ShellCheck |
+| `provision.yml` | Run workflow (`deploy` checkbox, default on) | `azd provision` + tracing, then deploy + smoke to `dev` |
+| `cd.yml` | push to `main` touching `deployment/**` or `prompt_agent/**`; Run workflow | CI → deploy changed agent(s) to `dev` → smoke → **approval** → `prod` → smoke |
+| `teardown.yml` | Run workflow, input `confirm` = resource group name | Delete RG, purge soft-deleted Foundry account |
+
+## B1. Prerequisites
+
+| Need | Check |
 |---|---|
-| 3. Sign in | OIDC federated credential, no secret (`azure/login`) |
-| 6–7, 12. Provision + tracing | **Provision** workflow (`lib.sh provision`) |
-| 5. Unit tests | **CI** workflow (Python 3.12 + 3.13 matrix) |
-| 9. Prompt Agent | `prompt_agent_ci.py publish`: new version only when `instructions.md` changes |
-| 11. Deploy Hosted Agent | `azd deploy` in `_deploy-agent.yml`, `dev` then `prod` (approval) |
-| 13–14. Verify | Smoke matrix from `scripts/ci/smoke-cases.json`: Hosted strict, Prompt soft |
-| 15. Clean up | **Teardown** workflow |
+| Fork (or repo) the user owns, **admin** on it | `gh auth status` shows that account; `gh repo view <owner>/<repo> --json viewerPermission` → `ADMIN` |
+| Workflows on the **default branch** | `workflow_dispatch` only works for workflow files on the default branch. Push to `main` (or whatever the default is) |
+| Azure: **Owner** (or User Access Administrator + Contributor) on the subscription | `az role assignment list --assignee <user> --all --include-inherited -o table` |
+| Entra: may create app registrations | default for members; otherwise Application Developer role |
+| Tools | `az` ≥ 2.91, `gh`, PowerShell 7 **or** bash, `jq` (bash only). `azd` is not needed locally |
+| Model quota | [step 4](#4-check-model-quota): ≥ 10 units of `gpt-5.6-sol` GlobalStandard |
 
-For an agent doing the setup:
+## B2. Collect inputs
 
-1. Get the user's approval. Have them sign in: `az login --tenant <TENANT_ID> --use-device-code`; `gh auth status` must show the fork's owner.
-2. Run `scripts/ci/setup-github-oidc.ps1 -GitHubRepo <owner>/<repo>` (or the `.sh`; on Git Bash set `MSYS_NO_PATHCONV=1`). Inputs as in step 1; `AZURE_ENV_NAME` becomes the project name.
-3. `gh workflow run provision.yml -R <owner>/<repo>`, then `gh run watch`.
-4. `gh workflow run cd.yml -R <owner>/<repo>`. When `prod` waits, ask the user to approve it in the run page.
-5. Teardown only when the user says so: `gh workflow run teardown.yml -R <owner>/<repo> -f confirm=<RESOURCE_GROUP>`.
+| Input | Example / default |
+|---|---|
+| `TENANT_ID`, `SUBSCRIPTION_ID` | ask the user |
+| `RESOURCE_GROUP` | `FoundryModalitiesCI` (use a different RG from Path A) |
+| `LOCATION` | `northcentralus` |
+| `ENV_NAME` | `foundry-modalities-ci` (= azd env = Foundry project name) |
+| `MODEL` | `gpt-5.6-sol` |
+| `REPO` | `<owner>/foundry-agent-modalities-demo` |
+| `PROD_REVIEWER` | GitHub login that approves prod (usually the user) |
 
-The workflows call `azd` with `AZURE_DEV_USER_AGENT=microsoft_foundry_skill` inline (in `lib.sh`), as in the rules above.
+## B3. Sign in
+
+```bash
+az login --tenant <TENANT_ID> --use-device-code      # ask the user to complete it
+az account set --subscription <SUBSCRIPTION_ID>
+gh auth status                                       # must be the repo owner
+```
+
+## B4. Run the setup script
+
+```powershell
+./scripts/ci/setup-github-oidc.ps1 -TenantId <TENANT_ID> -SubscriptionId <SUBSCRIPTION_ID> `
+  -ResourceGroup <RESOURCE_GROUP> -Location <LOCATION> -EnvName <ENV_NAME> -Model <MODEL> `
+  -GitHubRepo <REPO> -ProdReviewer <PROD_REVIEWER>
+```
+
+```bash
+MSYS_NO_PATHCONV=1 \
+AZURE_TENANT_ID=<TENANT_ID> AZURE_SUBSCRIPTION_ID=<SUBSCRIPTION_ID> AZURE_RESOURCE_GROUP=<RESOURCE_GROUP> \
+AZURE_LOCATION=<LOCATION> AZURE_ENV_NAME=<ENV_NAME> AZURE_AI_MODEL_DEPLOYMENT_NAME=<MODEL> \
+GITHUB_REPO=<REPO> PROD_REVIEWER=<PROD_REVIEWER> ./scripts/ci/setup-github-oidc.sh
+```
+
+`MSYS_NO_PATHCONV=1` is only needed in Git Bash on Windows (it stops `/subscriptions/...` being rewritten to a Windows path). Omitted inputs are prompted for. ~1–2 min. Expected output, in order: `Resource group`, `App registration` + `client id`, 3 × `+ <prefix>:…` federated credentials, custom role, 4 × `+ <role> @ …`, GitHub variables, environments, `Done`. Re-runs print `✓` for existing items. `WARNING: Argument '--condition' is in preview` is harmless.
+
+Add `-ExtraBranches feat/x` (PowerShell) or `EXTRA_BRANCHES=feat/x` (bash) only if a non-`main` branch must sign in to Azure outside an environment.
+
+## B5. Verify the configuration
+
+```bash
+gh variable list -R <REPO>        # 7 names: AZURE_AI_MODEL_DEPLOYMENT_NAME AZURE_CLIENT_ID AZURE_ENV_NAME AZURE_LOCATION AZURE_RESOURCE_GROUP AZURE_SUBSCRIPTION_ID AZURE_TENANT_ID
+gh api repos/<REPO>/environments -q '.environments[] | {name, rules: [.protection_rules[]?.type]}'
+#   {"name":"dev","rules":[]}  {"name":"prod","rules":["required_reviewers"]}
+az ad app federated-credential list --id <CLIENT_ID> --query "[].subject" -o tsv
+az role assignment list --all --assignee <CLIENT_ID> --query "[].{role:roleDefinitionName, scope:scope}" -o table
+#   Contributor, Foundry User, Role Based Access Control Administrator (RG) + Foundry CI subscription deployer (subscription)
+```
+
+## B6. Provision
+
+```bash
+gh workflow run provision.yml -R <REPO> --ref main
+gh run list -R <REPO> -w Provision -L 1          # get the run ID
+gh run watch <RUN_ID> -R <REPO> --exit-status    # ~10 min
+```
+
+Expected jobs, all green: `preflight / Check repository variables`, `azd provision + tracing` (~3 min), `deploy / Plan test matrix`, `deploy / Deploy (dev)` (~4 min; first Hosted deploy), 4 × `deploy / Smoke …`. Run with `-f deploy=false` to provision only. Re-running Provision is safe (no changes).
+
+## B7. Deploy dev → prod (CD)
+
+```bash
+gh workflow run cd.yml -R <REPO> --ref main      # manual run deploys both agents
+gh run watch <RUN_ID> -R <REPO>                  # stops being "in progress" at the prod gate
+```
+
+When `prod / Deploy (prod)` is `waiting`, **ask the user** to open the run URL → **Review deployments** → tick `prod` → **Approve and deploy**. Don't approve on the user's behalf. Then watch again until `completed`.
+
+## B8. Verify
+
+```bash
+gh run view <RUN_ID> -R <REPO> --json conclusion,jobs -q '.conclusion, (.jobs[] | "\(.name): \(.conclusion)")'
+```
+
+Must be green: `preflight`, `ci` (3 jobs), `What changed?`, and for **each** of `dev` / `prod`: `Plan test matrix`, `Deploy`, and 4 smoke legs:
+
+| Leg | Mode | Expected answer |
+|---|---|---|
+| `hosted × contoso-95min-outage` | strict (fails the job on mismatch) | P0, score 8, `OUTAGE_60` `STRATEGIC_CONTRACT` `REGULATED_IMPACT` `RENEWAL_30` |
+| `hosted × contoso-30min-outage` | strict | P1, score 5, no `OUTAGE_60` |
+| `prompt × contoso-95min-outage` | soft (`::warning::` only) | same as hosted |
+| `prompt × contoso-30min-outage` | soft | same as hosted |
+
+A yellow warning on a **prompt** leg is acceptable (the model does the math); a red **hosted** leg is a real failure. Check annotations:
+
+```bash
+gh api repos/<REPO>/check-runs/<JOB_ID>/annotations -q '.[].message'
+```
+
+The run page's step summaries show: preflight variable table (✅/❌), "Deploy to `dev`" table (Hosted version + `active`, Prompt version or *Unchanged*), and one section per smoke leg with the agent's full answer. Deploy logs show `Published … version N` or `Unchanged (content_sha=…)`; unchanged Hosted code also keeps its version. In prod (same project here) both are usually *Unchanged*.
+
+Traces: same KQL as [step 13](#13-verify-both-deployed-agents) against `appi-<ENV_NAME>`; expect `execute_tool calculate_case_priority`.
+
+## B9. Push-triggered deploys
+
+| You push | CI | CD |
+|---|---|---|
+| docs only (`*.md`, `docs/**`) | — | — |
+| `scripts/ci/**`, `.github/**` | runs | — |
+| `deployment/**` | runs | Hosted deployed, Prompt skipped |
+| `prompt_agent/instructions.md` | runs | Prompt published (new version), Hosted skipped |
+
+Each still waits for prod approval.
+
+## B10. Teardown and re-setup
+
+Only when the user says they're done:
+
+```bash
+gh workflow run teardown.yml -R <REPO> --ref main -f confirm=<RESOURCE_GROUP>
+```
+
+Deletes Log Analytics (force, no soft delete), the resource group, and purges the soft-deleted Foundry account. Keeps the app registration, federated credentials, GitHub variables and environments. The RG role assignments are deleted **with the RG**, so before the next Provision re-run B4 (idempotent: recreates the RG and its 3 role assignments, `✓` for the rest).
+
+## B11. Troubleshooting (hit during validation)
+
+| Symptom | Fix |
+|---|---|
+| `Workflow does not have 'workflow_dispatch' trigger` / workflow not in the Actions list | Workflow files must be on the **default** branch |
+| `AADSTS700213: No matching federated identity record … subject 'repo:owner@123/repo@456:…'` | GitHub uses **immutable-ID subjects** for new repos. Re-run B4: it reads `gh api repos/<REPO>/actions/oidc/customization/sub -q .sub_claim_prefix`. Delete stale `repo:owner/repo:…` credentials |
+| `ERROR: failed to download artifact … status code: 504` in *Install azd Foundry extensions* | Transient; `setup-foundry` retries 3×. Else **Re-run failed jobs** |
+| Git Bash: `--scope` becomes `C:/Program Files/Git/subscriptions/…` | `MSYS_NO_PATHCONV=1` |
+| Git Bash: `Failed to parse string as JSON: /tmp/tmp.…` | Already fixed (script writes temp files to the current folder). Pull latest |
+| Setup script: `RemoteDisconnected` traceback from `az role assignment list` | Transient Graph error; re-run B4 |
+| Preflight green, Azure jobs grey | No variables set; run B4 |
+| Preflight red `X is not set` | Partial config; run B4 or add the listed variables |
+| `AuthorizationFailed … Microsoft.Resources/deployments/write` | Custom subscription role missing; re-run B4 |
+| `No Foundry project … Run the 'Provision' workflow first` | Run B6 |
+| Prompt leg `unexpected reason code OUTAGE_60` | Model wrote the code on a line without "not"; soft warning, expected occasionally |
+
+Local smoke check of the library functions (no Azure): `./scripts/ci/lib.sh case_ids` and `./scripts/ci/lib.sh case_prompt contoso-30min-outage`.
