@@ -150,7 +150,7 @@ That's the demo's point, now visible in CI: **code you own is testable; instruct
 
 ### Variables the workflows read
 
-Settings → Secrets and variables → Actions → **Variables**. None are secrets.
+Settings → Secrets and variables → Actions → **Variables**. None are secrets: IDs identify things, they don't grant access (OIDC + roles do). They do show up in job logs, so don't use a public fork if that bothers you.
 
 | Variable | What it is | Where to get it | Example |
 |---|---|---|---|
@@ -230,7 +230,7 @@ Approve prod: open the run → **Review deployments** → tick `prod` → **Appr
 
 Try it: change `if outage_minutes >= 60` to `>= 30` in `priority_rules.py` and push. The unit tests still pass (none uses a 30-minute outage), the Hosted Agent deploys to dev, and the **strict** `hosted × contoso-30min-outage` leg fails because the answer is now P0. Prod never gets an approval request. That's the smoke test catching a policy change the unit tests missed.
 
-Each Hosted deploy creates a new agent version. Each Prompt publish creates one only when `instructions.md` (or the model) changed: the version's metadata stores a content hash and the git SHA.
+Both agents are **idempotent**: deploying the same thing twice doesn't create a new version. `azd deploy` compares the Hosted Agent's code hash (`content_hash`) and keeps the existing version when nothing changed. `prompt_agent_ci.py` does the same for the Prompt Agent: it stores a hash of `instructions.md` + model, plus the git SHA, in the version's metadata. That's why prod (same project here) reports *Unchanged* after dev already deployed.
 
 ## After Teardown
 
@@ -251,10 +251,11 @@ Teardown deletes the resource group, so its role assignments go too. The app reg
 | Prompt leg yellow ⚠️ | Expected sometimes: the model's math isn't guaranteed. Read the response in the summary |
 | Hosted leg red ❌ | Real regression. The summary shows which check failed and the full answer |
 | `InsufficientQuota` during Provision | Pick another region or model ([ai-deployment.md § 4](ai-deployment.md#4-check-model-quota)) |
+| `failed to download artifact … 504` installing the azd extension | Transient. `setup-foundry` retries 3×; if all fail, **Re-run failed jobs** |
 
 ## Cost
 
-Provision creates the same billable resources as [ai-deployment.md](ai-deployment.md): model calls, Hosted Agent sessions, trace ingestion. Every CD run makes ~8 model calls (4 smoke legs × dev/prod). Run **Teardown** when you're done.
+Provision creates the same billable resources as [ai-deployment.md](ai-deployment.md): model calls, Hosted Agent sessions, trace ingestion. A full CD run sends 8 smoke-test requests (4 legs × dev/prod). Run **Teardown** when you're done.
 
 ## References
 
