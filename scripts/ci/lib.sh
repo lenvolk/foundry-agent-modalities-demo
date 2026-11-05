@@ -132,12 +132,13 @@ connect_tracing() {
   appi_cs="$(az monitor app-insights component show -g "$AZURE_RESOURCE_GROUP" -a "$appi" --query connectionString -o tsv)"
   echo "::add-mask::$appi_cs"   # never print the connection string in logs
 
-  body="$(mktemp)"; trap 'rm -f "$body"' RETURN
+  body="$(mktemp)"
   jq -n --arg id "$appi_id" --arg cs "$appi_cs" '{properties: {
       category: "AppInsights", target: $id, authType: "ApiKey", isSharedToAll: false,
       credentials: {key: $cs}, metadata: {ApiType: "Azure", ResourceId: $id}}}' > "$body"
   az rest --method put --body "@$body" -o none \
     --url "https://management.azure.com/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$ACCOUNT/projects/$PROJECT/connections/$appi?api-version=2026-07-01"
+  rm -f "$body"
   echo "Tracing connected: $appi → $ACCOUNT/$PROJECT"
 }
 
