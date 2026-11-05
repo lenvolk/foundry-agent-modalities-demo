@@ -27,7 +27,12 @@ runs:
     - name: Install azd Foundry extensions
       shell: bash
       run: |
-        azd extension install microsoft.foundry --source azd --no-prompt
+        for attempt in 1 2 3; do   # the extension download occasionally hits a 5xx; retry with backoff
+          azd extension install microsoft.foundry --source azd --no-prompt && break
+          [[ $attempt == 3 ]] && exit 1
+          echo "::warning::azd extension install failed (attempt $attempt); retrying in $((attempt * 15))s"
+          sleep $((attempt * 15))
+        done
         azd ai agent --help > /dev/null
 
     - name: Sign in to Azure (OIDC, no secrets)
