@@ -80,9 +80,12 @@ try {
   # The OIDC token's "subject" must match one of these exactly.
   Step 'Federated credentials (who may sign in as this app)'
   $subjects = @('environment:dev', 'environment:prod', 'ref:refs/heads/main') + ($ExtraBranches | ForEach-Object { "ref:refs/heads/$_" })
+  # GitHub decides the subject prefix. Newer repos use immutable IDs: repo:owner@123/name@456
+  $prefix = Quiet { gh api "repos/$GitHubRepo/actions/oidc/customization/sub" -q .sub_claim_prefix }
+  if (-not $prefix) { $prefix = "repo:$GitHubRepo" }
   $existing = @(az ad app federated-credential list --id $AppId --query '[].subject' -o tsv)
   foreach ($s in $subjects) {
-    $subject = "repo:${GitHubRepo}:$s"
+    $subject = "${prefix}:$s"
     if ($existing -contains $subject) { Write-Host "  ✓ $subject"; continue }
     $name = 'gh-' + (($s -replace '[^A-Za-z0-9-]', '-').TrimEnd('-'))
     @{ name = $name; issuer = 'https://token.actions.githubusercontent.com'; subject = $subject
@@ -114,9 +117,9 @@ try {
     Start-Sleep 20   # new role definitions take a moment to replicate
   }
 
-  function Assign([string]$Role, [string]$Scope, [string]$Condition) {
-    $label = "$Role @ $($Scope.Replace($SubScope, ''))"
-    if (az role assignment list --assignee $SpId --role $Role --scope $Scope --query '[0].id' -o tsv) { Write-Host "  ✓ $label"; return }
+  function Assign([string]$Label, [string]$Role, [string]$Scope, [string]$Condition) {
+    $label = "$Label @ $(if ($Scope -eq $SubScope) { 'subscription' } else { "resource group $ResourceGroup" })"
+    if (az role assignment list --scope $Scope --role $Role --query "[?principalId=='$SpId'] | [0].id" -o tsv) { Write-Host "  ✓ $label"; return }
     $extra = if ($Condition) { @('--condition', $Condition, '--condition-version', '2.0') } else { @() }
     foreach ($attempt in 1..5) {   # a brand-new principal can take a minute to replicate
       try {
@@ -132,10 +135,10 @@ try {
   $condition = "((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$FoundryUserRole})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$FoundryUserRole}))"
 
   Step 'Role assignments'
-  Assign $ContributorRole $RgScope
-  Assign $FoundryUserRole $RgScope
-  Assign $RbacAdminRole   $RgScope $condition
-  Assign $CustomRoleName  $SubScope
+  Assign 'Contributor'                      $ContributorRole $RgScope
+  Assign 'Foundry User'                     $FoundryUserRole $RgScope
+  Assign 'RBAC Administrator (conditional)' $RbacAdminRole   $RgScope $condition
+  Assign $CustomRoleName                    $CustomRoleName  $SubScope
 
   # -------------------------------------------------------------- GitHub ---
   Step "GitHub variables on $GitHubRepo"

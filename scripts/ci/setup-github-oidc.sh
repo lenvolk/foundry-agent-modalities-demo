@@ -71,10 +71,13 @@ echo "client id: $APP_ID"
 step "Federated credentials (who may sign in as this app)"
 subjects=("environment:dev" "environment:prod" "ref:refs/heads/main")
 IFS=',' read -r -a extra <<<"$EXTRA_BRANCHES"
-for b in ${extra[@]+"${extra[@]}"}; do [[ -n "$b" ]] && subjects+=("ref:refs/heads/$b"); done
+for b in ${extra[@]+"${extra[@]}"}; do if [[ -n "$b" ]]; then subjects+=("ref:refs/heads/$b"); fi; done
+# GitHub decides the subject prefix. Newer repos use immutable IDs: repo:owner@123/name@456
+prefix="$(gh api "repos/$GITHUB_REPO/actions/oidc/customization/sub" -q .sub_claim_prefix 2>/dev/null || true)"
+prefix="${prefix:-repo:$GITHUB_REPO}"
 existing="$(az ad app federated-credential list --id "$APP_ID" --query "[].subject" -o tsv)"
 for s in "${subjects[@]}"; do
-  subject="repo:$GITHUB_REPO:$s"
+  subject="$prefix:$s"
   if grep -qxF "$subject" <<<"$existing"; then echo "  ✓ $subject"; continue; fi
   name="gh-$(tr -c 'A-Za-z0-9-' '-' <<<"$s" | cut -c1-100 | sed 's/-*$//')"
   az ad app federated-credential create --id "$APP_ID" -o none --parameters "$(printf \
@@ -85,7 +88,7 @@ done
 
 # ------------------------------------------------------------------ RBAC ---
 step "Custom role: $CUSTOM_ROLE_NAME (subscription-level deployments + purge)"
-role_json="$(mktemp)"; trap 'rm -f "$role_json"' EXIT
+role_json="$(mktemp ./.foundry-ci-role.XXXXXX)"; trap 'rm -f "$role_json"' EXIT   # relative path: works for az on Windows Git Bash too
 cat >"$role_json" <<EOF
 {
   "Name": "$CUSTOM_ROLE_NAME",
@@ -112,15 +115,17 @@ else
   sleep 20   # new role definitions take a moment to replicate
 fi
 
-assign() {   # assign <role name or id> <scope> [condition]
-  if [[ -n "$(az role assignment list --assignee "$SP_ID" --role "$1" --scope "$2" --query "[0].id" -o tsv)" ]]; then
-    echo "  ✓ $1 @ ${2#"$SUB_SCOPE"}"; return
+assign() {   # assign <label> <role name or id> <scope> [condition]
+  local label="$1"; shift
+  label="$label @ $([[ "$2" == "$SUB_SCOPE" ]] && echo subscription || echo "resource group $AZURE_RESOURCE_GROUP")"
+  if [[ -n "$(az role assignment list --scope "$2" --role "$1" --query "[?principalId=='$SP_ID'] | [0].id" -o tsv)" ]]; then
+    echo "  ✓ $label"; return
   fi
   local extra_args=()
-  [[ -n "${3:-}" ]] && extra_args=(--condition "$3" --condition-version 2.0)
+  if [[ -n "${3:-}" ]]; then extra_args=(--condition "$3" --condition-version 2.0); fi
   for attempt in 1 2 3 4 5; do   # a brand-new principal can take a minute to replicate
     az role assignment create --assignee-object-id "$SP_ID" --assignee-principal-type ServicePrincipal \
-      --role "$1" --scope "$2" ${extra_args[@]+"${extra_args[@]}"} -o none && { echo "  + $1 @ ${2#"$SUB_SCOPE"}"; return; }
+      --role "$1" --scope "$2" ${extra_args[@]+"${extra_args[@]}"} -o none && { echo "  + $label"; return; }
     echo "  … retrying ($attempt)"; sleep 15
   done
   exit 1
@@ -130,10 +135,10 @@ assign() {   # assign <role name or id> <scope> [condition]
 CONDITION="((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$FOUNDRY_USER_ROLE})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$FOUNDRY_USER_ROLE}))"
 
 step "Role assignments"
-assign "$CONTRIBUTOR_ROLE"   "$RG_SCOPE"
-assign "$FOUNDRY_USER_ROLE"  "$RG_SCOPE"
-assign "$RBAC_ADMIN_ROLE"    "$RG_SCOPE" "$CONDITION"
-assign "$CUSTOM_ROLE_NAME"   "$SUB_SCOPE"
+assign "Contributor"                      "$CONTRIBUTOR_ROLE"  "$RG_SCOPE"
+assign "Foundry User"                     "$FOUNDRY_USER_ROLE" "$RG_SCOPE"
+assign "RBAC Administrator (conditional)" "$RBAC_ADMIN_ROLE"   "$RG_SCOPE" "$CONDITION"
+assign "$CUSTOM_ROLE_NAME"                "$CUSTOM_ROLE_NAME"  "$SUB_SCOPE"
 
 # ---------------------------------------------------------------- GitHub ---
 step "GitHub variables on $GITHUB_REPO"
