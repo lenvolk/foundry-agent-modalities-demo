@@ -1,0 +1,52 @@
+# CI: fast checks with no Azure access. Runs on every push and pull request,
+# and is also called by cd.yml (workflow_call) so CD never deploys untested code.
+name: CI
+
+on:
+  push:
+    paths: &code
+      - "deployment/src/**"
+      - "prompt_agent/**"
+      - "scripts/ci/**"
+      - ".github/**"
+  pull_request:
+    paths: *code
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Newer commits on the same branch cancel older CI runs (saves minutes).
+  # github.workflow_ref keeps the group distinct when called from cd.yml.
+  group: ci-${{ github.workflow_ref }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Test priority_rules.py (the Hosted Agent's policy code)
+        run: python -m unittest discover -s deployment/src/agent-framework-agent-with-local-tools-responses/tests -v
+
+  lint-scripts:
+    name: Check CI scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ShellCheck + JSON + Python syntax
+        run: |
+          shellcheck -S warning scripts/ci/*.sh
+          jq empty scripts/ci/smoke-cases.json
+          python3 -m py_compile scripts/ci/prompt_agent_ci.py

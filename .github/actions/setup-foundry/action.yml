@@ -1,0 +1,57 @@
+name: Set up Foundry tools
+description: >
+  Reusable building block. Installs azd + the microsoft.foundry extension,
+  signs in to Azure with OIDC (no secrets), and optionally sets up Python.
+
+inputs:
+  client-id:
+    description: App registration (client) ID of the CI service principal
+    required: true
+  tenant-id:
+    description: Microsoft Entra tenant ID
+    required: true
+  subscription-id:
+    description: Azure subscription ID
+    required: true
+  python:
+    description: "'true' to install Python + the Prompt Agent SDK (pip cached)"
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Azure Developer CLI
+      uses: Azure/setup-azd@0b7e3a35ab00f2eee7080c845eb39c3f0ebfa553 # v2.4.0
+
+    - name: Install azd Foundry extensions
+      shell: bash
+      run: |
+        azd extension install microsoft.foundry --source azd --no-prompt
+        azd ai agent --help > /dev/null
+
+    - name: Sign in to Azure (OIDC, no secrets)
+      uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+
+    - name: Let azd reuse the Azure CLI sign-in
+      shell: bash
+      run: |
+        azd config set auth.useAzCliAuth true
+        azd config set defaults.subscription "${{ inputs.subscription-id }}"
+
+    - name: Set up Python (pip cache)
+      if: inputs.python == 'true'
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.13"
+        cache: pip
+        cache-dependency-path: prompt_agent/requirements.txt
+
+    - name: Install Prompt Agent SDK
+      if: inputs.python == 'true'
+      shell: bash
+      run: pip install --quiet -r prompt_agent/requirements.txt

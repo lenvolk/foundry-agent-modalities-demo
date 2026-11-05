@@ -1,0 +1,106 @@
+# Reusable deploy + smoke test. Called by cd.yml (dev, then prod) and provision.yml.
+#
+#   deploy ──┐
+#            ├──► smoke (matrix: every test case × every agent type)
+#   plan  ───┘
+name: _deploy-agent
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment to deploy to (dev | prod)
+        type: string
+        required: true
+      deploy-hosted:
+        description: Deploy a new Hosted Agent version
+        type: boolean
+        default: true
+      deploy-prompt:
+        description: Publish a Prompt Agent version (only if instructions changed)
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write   # lets the job request an OIDC token for azure/login
+  contents: read
+
+env:
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME }}
+  AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME || 'gpt-5.6-sol' }}
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}   # prod waits here for approval
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-foundry
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          python: ${{ inputs.deploy-prompt }}
+
+      - run: ./scripts/ci/lib.sh deploy_summary_header ${{ inputs.environment }}
+
+      - name: Deploy Hosted Agent (azd deploy)
+        if: inputs.deploy-hosted
+        run: ./scripts/ci/lib.sh deploy_hosted
+
+      - name: Publish Prompt Agent (instructions.md)
+        if: inputs.deploy-prompt
+        run: ./scripts/ci/lib.sh publish_prompt
+
+      - name: Note skipped Hosted Agent
+        if: ${{ !inputs.deploy-hosted }}
+        run: ./scripts/ci/lib.sh skip_note "🐍 Hosted Agent"
+
+      - name: Note skipped Prompt Agent
+        if: ${{ !inputs.deploy-prompt }}
+        run: ./scripts/ci/lib.sh skip_note "📝 Prompt Agent"
+
+  plan:
+    name: Plan test matrix
+    runs-on: ubuntu-latest
+    outputs:
+      cases: ${{ steps.cases.outputs.cases }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/ci
+      - id: cases
+        run: echo "cases=$(./scripts/ci/lib.sh case_ids)" >> "$GITHUB_OUTPUT"
+
+  smoke:
+    name: Smoke ${{ matrix.agent }} × ${{ matrix.case }}
+    needs: [deploy, plan]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false            # run every leg, even if one fails
+      matrix:
+        case: ${{ fromJSON(needs.plan.outputs.cases) }}   # loop over scripts/ci/smoke-cases.json
+        agent: [hosted, prompt]
+        include:                  # attach the assertion mode to each agent type
+          - agent: hosted
+            mode: strict
+          - agent: prompt
+            mode: soft
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-foundry
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          python: ${{ matrix.agent == 'prompt' }}
+
+      - name: Invoke and assert (${{ matrix.mode }})
+        run: ./scripts/ci/lib.sh smoke_test ${{ matrix.agent }} ${{ matrix.case }} ${{ matrix.mode }}

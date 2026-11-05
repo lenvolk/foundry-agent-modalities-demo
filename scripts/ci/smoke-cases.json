@@ -1,0 +1,30 @@
+[
+  {
+    "id": "contoso-95min-outage",
+    "customer": "Contoso Retail",
+    "annual_contract_usd": 240000,
+    "outage_minutes": 95,
+    "regulated_regions": 2,
+    "renewal_days": 21,
+    "expect": {
+      "priority": "P0",
+      "score": 8,
+      "reason_codes": ["OUTAGE_60", "STRATEGIC_CONTRACT", "REGULATED_IMPACT", "RENEWAL_30"],
+      "absent_codes": []
+    }
+  },
+  {
+    "id": "contoso-30min-outage",
+    "customer": "Contoso Retail",
+    "annual_contract_usd": 240000,
+    "outage_minutes": 30,
+    "regulated_regions": 2,
+    "renewal_days": 21,
+    "expect": {
+      "priority": "P1",
+      "score": 5,
+      "reason_codes": ["STRATEGIC_CONTRACT", "REGULATED_IMPACT", "RENEWAL_30"],
+      "absent_codes": ["OUTAGE_60"]
+    }
+  }
+]

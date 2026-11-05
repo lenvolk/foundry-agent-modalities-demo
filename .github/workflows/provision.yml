@@ -1,0 +1,59 @@
+# Manual: create the Foundry account, project, model deployment and tracing,
+# then (optionally) deploy both agents to dev. Safe to re-run (idempotent).
+name: Provision
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy both agents to dev after provisioning
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foundry-${{ vars.AZURE_ENV_NAME || 'unconfigured' }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    uses: ./.github/workflows/_preflight.yml
+
+  provision:
+    name: azd provision + tracing
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME || 'gpt-5.6-sol' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-foundry
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision Foundry + connect tracing
+        run: ./scripts/ci/lib.sh provision
+
+  deploy:
+    needs: provision
+    if: inputs.deploy
+    uses: ./.github/workflows/_deploy-agent.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: dev

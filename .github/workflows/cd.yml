@@ -1,0 +1,70 @@
+# CD: test → deploy to dev → (approval) → deploy to prod.
+# Push to main deploys only the agent whose folder changed. "Run workflow" deploys both.
+name: CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deployment/**"
+      - "prompt_agent/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deployment at a time per Foundry project. Never cancel a deploy halfway;
+  # a newer run waits (and replaces any older run that is still waiting).
+  group: foundry-${{ vars.AZURE_ENV_NAME || 'unconfigured' }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    uses: ./.github/workflows/_preflight.yml
+
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  changes:
+    name: What changed?
+    needs: [preflight, ci]
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      hosted: ${{ github.event_name != 'push' || steps.filter.outputs.hosted == 'true' }}
+      prompt: ${{ github.event_name != 'push' || steps.filter.outputs.prompt == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: filter
+        if: github.event_name == 'push'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            hosted:
+              - "deployment/**"
+            prompt:
+              - "prompt_agent/instructions.md"
+
+  dev:
+    needs: changes
+    if: needs.changes.outputs.hosted == 'true' || needs.changes.outputs.prompt == 'true'
+    uses: ./.github/workflows/_deploy-agent.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: dev
+      deploy-hosted: ${{ needs.changes.outputs.hosted == 'true' }}
+      deploy-prompt: ${{ needs.changes.outputs.prompt == 'true' }}
+
+  prod:
+    needs: [changes, dev]
+    uses: ./.github/workflows/_deploy-agent.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: prod   # protected: a reviewer must approve
+      deploy-hosted: ${{ needs.changes.outputs.hosted == 'true' }}
+      deploy-prompt: ${{ needs.changes.outputs.prompt == 'true' }}

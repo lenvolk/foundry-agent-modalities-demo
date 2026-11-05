@@ -1,0 +1,36 @@
+# Reusable "is this repo configured for Azure?" check, called first by every
+# Azure workflow. Output `configured` = 'true' | 'false'.
+#   no variables at all  -> 'false', green run, Azure jobs are SKIPPED
+#   some variables       -> red, lists exactly what is missing
+name: _preflight
+
+on:
+  workflow_call:
+    outputs:
+      configured:
+        description: "'true' when all required repository variables are set"
+        value: ${{ jobs.check.outputs.configured }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check repository variables
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.preflight.outputs.configured }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/ci
+
+      - id: preflight
+        run: ./scripts/ci/lib.sh preflight
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME }}

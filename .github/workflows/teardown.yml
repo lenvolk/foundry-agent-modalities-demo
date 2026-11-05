@@ -1,0 +1,53 @@
+# Manual: delete the Azure resources (resource group + purge soft-deleted items).
+# Keeps the app registration, federated credentials, GitHub variables/environments.
+name: Teardown
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type the resource group name to confirm deletion
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foundry-${{ vars.AZURE_ENV_NAME || 'unconfigured' }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    uses: ./.github/workflows/_preflight.yml
+
+  teardown:
+    name: Delete Azure resources
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      - name: Check confirmation
+        if: inputs.confirm != vars.AZURE_RESOURCE_GROUP
+        env:
+          TYPED: ${{ inputs.confirm }}   # via env, never ${{ }} inside run: (script injection)
+        run: |
+          echo "::error::Typed '$TYPED' but the resource group is '$AZURE_RESOURCE_GROUP'. Nothing deleted."
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-foundry
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete resource group and purge
+        run: ./scripts/ci/lib.sh teardown
