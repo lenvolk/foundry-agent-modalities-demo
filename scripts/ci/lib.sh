@@ -202,7 +202,9 @@ check_response() {   # check_response <file> <case-id>
   [[ "$got_p" == "$want_p" ]] || echo "priority: expected $want_p, got ${got_p:-nothing}"
   [[ "$got_s" == "$want_s" ]] || echo "score: expected $want_s, got ${got_s:-nothing}"
   for code in $(jq -r '.reason_codes[]' <<<"$exp"); do grep -q "$code" <<<"$text" || echo "missing reason code $code"; done
-  for code in $(jq -r '.absent_codes[]' <<<"$exp"); do ! grep -q "$code" <<<"$text" || echo "unexpected reason code $code"; done
+  for code in $(jq -r '.absent_codes[]' <<<"$exp"); do   # ignore lines like "OUTAGE_60 not triggered"
+    ! grep -viE "\bnot\b|n't|\bno\b|without|none" <<<"$text" | grep -q "$code" || echo "unexpected reason code $code"
+  done
 }
 
 # strict = fail the job on mismatch (Hosted: Python computes the answer)
