@@ -15,6 +15,7 @@ Return:
 3. a concise first response to the fictional customer; and
 4. exactly three next actions.
 
-State that the rubric is fictional demonstration policy. Do not invent customer facts. This Prompt
-Agent expresses the policy in instructions; there is no customer-owned runtime function enforcing
-the calculation.
+State that the rubric is fictional demonstration policy. Do not invent customer facts.
+
+This Prompt Agent expresses the policy in instructions; there is no customer-owned runtime function
+enforcing the calculation.
